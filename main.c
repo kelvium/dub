@@ -9,12 +9,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "hash.h"
+
+struct callmap_callee {
+	int count;
+	const char* whom;
+};
+
+struct callmap_caller {
+	struct callmap_callee* list;
+	int capacity;
+	int size;
+};
 
 static CXCursor current_function;
+static struct hashmap callmap;
 
 static enum CXChildVisitResult visitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
 	CXString name = clang_getCursorSpelling(cursor);
+	const char* name_cstr = clang_getCString(name);
 	enum CXCursorKind kind = clang_getCursorKind(cursor);
 
 	switch (kind) {
@@ -24,7 +38,36 @@ static enum CXChildVisitResult visitor(CXCursor cursor, CXCursor parent, CXClien
 	case CXCursor_CallExpr: {
 		if (!clang_Cursor_isNull(current_function)) {
 			CXString current_function_name = clang_getCursorSpelling(current_function);
-			printf("\"%s\" -> \"%s\"\n", clang_getCString(current_function_name), clang_getCString(name));
+			const char* current_function_name_cstr = clang_getCString(current_function_name);
+			struct callmap_caller* caller_entry = hashmap_get(&callmap, current_function_name_cstr);
+			if (caller_entry == NULL) {
+				struct callmap_caller* new_caller_entry = malloc(sizeof(*new_caller_entry));
+				new_caller_entry->capacity = 16;
+				new_caller_entry->size = 0;
+				new_caller_entry->list = calloc(new_caller_entry->capacity, sizeof(struct callmap_callee));
+				hashmap_insert(&callmap, current_function_name_cstr, new_caller_entry);
+				caller_entry = new_caller_entry;
+			}
+			bool fn_was_present = false;
+			for (int i = 0; i < caller_entry->size; ++i) {
+				struct callmap_callee* callee = caller_entry->list + i;
+				if (strcmp(callee->whom, name_cstr) == 0) {
+					++callee->count;
+					fn_was_present = true;
+					break;
+				}
+			}
+			if (!fn_was_present) {
+				if (caller_entry->capacity == caller_entry->size) {
+					int new_capacity = caller_entry->capacity * 2;
+					caller_entry->list = realloc(caller_entry->list, sizeof(struct callmap_callee) * new_capacity);
+					caller_entry->capacity = new_capacity;
+				}
+				struct callmap_callee* callee_entry = caller_entry->list + caller_entry->size;
+				callee_entry->count = 1;
+				callee_entry->whom = strdup(name_cstr);
+				++caller_entry->size;
+			}
 			clang_disposeString(current_function_name);
 		}
 	} break;
@@ -43,12 +86,11 @@ int main(int argc, char** argv)
 	}
 	const char* compile_commands_path = argv[1];
 
+	hashmap_create(&callmap);
+
 	CXIndex index = clang_createIndex(1, 0);
 	CXCompilationDatabase compilation_db = clang_CompilationDatabase_fromDirectory(compile_commands_path, NULL);
 	CXCompileCommands compile_commands = clang_CompilationDatabase_getAllCompileCommands(compilation_db);
-
-	printf("digraph {\n");
-	printf("graph [rankdir=LR ranksep=5 nodesep=0.01]\n");
 
 	unsigned int commands_count = clang_CompileCommands_getSize(compile_commands);
 	for (unsigned int i = 0; i < commands_count; ++i) {
@@ -86,6 +128,20 @@ int main(int argc, char** argv)
 	clang_CompilationDatabase_dispose(compilation_db);
 	clang_disposeIndex(index);
 
-	printf("}\n");
+	for (int i = 0; i < callmap.capacity; ++i) {
+		struct hashmap_entry* entry = callmap.table + i;
+		if (entry->exists) {
+			const struct callmap_caller* caller = entry->value;
+			for (int j = 0; j < caller->size; ++j) {
+				const struct callmap_callee* callee = caller->list + j;
+				printf("%s -> %s (%d)\n", entry->key, callee->whom, callee->count);
+				free((void*) callee->whom);
+			}
+			free((void*) caller->list);
+			free((void*) caller);
+		}
+	}
+
+	hashmap_free(&callmap);
 	return 0;
 }
