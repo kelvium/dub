@@ -2,6 +2,7 @@
 *.dot
 *.svg
 *.png
+*.html
 
 /main
 /compile_commands.json
