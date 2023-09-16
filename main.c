@@ -5,7 +5,6 @@
  */
 
 #include "hash.h"
-#include <assert.h>
 #include <clang-c/CXCompilationDatabase.h>
 #include <clang-c/Index.h>
 #include <stdio.h>
@@ -185,13 +184,19 @@ int main(int argc, char** argv)
 		if (entry->exists) {
 			const struct callmap_caller* caller = entry->value;
 			const char* entry_sig = hashmap_get(&name2sigmap, entry->key);
-			assert(entry_sig != NULL);
+			if (entry_sig == NULL) {
+				fprintf(stderr, "something weird happened: we don't know the definition of %s\n", entry->key);
+				entry_sig = entry->key;
+			}
 			printf("<li><a id=\"%s\" href=\"#\">%s: %d</a>", entry_sig, entry_sig, caller->size);
 			printf("<ul>");
 			for (int j = 0; j < caller->size; ++j) {
 				const struct callmap_callee* callee = caller->list + j;
 				const char* whom_sig = hashmap_get(&name2sigmap, callee->whom);
-				assert(whom_sig != NULL);
+				if (whom_sig == NULL) {
+					fprintf(stderr, "something weird happened: we don't know the definition of %s\n", callee->whom);
+					whom_sig = callee->whom;
+				}
 				printf("<li><a href=\"#%s\">%s (%d)</a></li>", whom_sig, whom_sig, callee->count);
 				free((void*) callee->whom);
 			}
