@@ -4,12 +4,13 @@
  * Copyright (c) 2023, Nikita Romaniuk
  */
 
+#include "hash.h"
+#include <assert.h>
 #include <clang-c/CXCompilationDatabase.h>
 #include <clang-c/Index.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "hash.h"
 
 #define DUB_VERSION "0.1.0"
 
@@ -25,17 +26,21 @@ struct callmap_caller {
 };
 
 static CXCursor current_function;
+static struct hashmap name2sigmap;
 static struct hashmap callmap;
 
 static enum CXChildVisitResult visitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
-	CXString name = clang_getCursorSpelling(cursor);
+	CXString spelling = clang_getCursorSpelling(cursor);
+	CXString name = clang_getCursorDisplayName(cursor);
+	const char* spelling_cstr = clang_getCString(spelling);
 	const char* name_cstr = clang_getCString(name);
 	enum CXCursorKind kind = clang_getCursorKind(cursor);
 
 	switch (kind) {
 	case CXCursor_FunctionDecl: {
 		current_function = cursor;
+		hashmap_insert(&name2sigmap, spelling_cstr, strdup(name_cstr));
 	} break;
 	case CXCursor_CallExpr: {
 		if (!clang_Cursor_isNull(current_function)) {
@@ -53,7 +58,7 @@ static enum CXChildVisitResult visitor(CXCursor cursor, CXCursor parent, CXClien
 			bool fn_was_present = false;
 			for (int i = 0; i < caller_entry->size; ++i) {
 				struct callmap_callee* callee = caller_entry->list + i;
-				if (strcmp(callee->whom, name_cstr) == 0) {
+				if (strcmp(callee->whom, spelling_cstr) == 0) {
 					++callee->count;
 					fn_was_present = true;
 					break;
@@ -67,7 +72,7 @@ static enum CXChildVisitResult visitor(CXCursor cursor, CXCursor parent, CXClien
 				}
 				struct callmap_callee* callee_entry = caller_entry->list + caller_entry->size;
 				callee_entry->count = 1;
-				callee_entry->whom = strdup(name_cstr);
+				callee_entry->whom = strdup(spelling_cstr);
 				++caller_entry->size;
 			}
 			clang_disposeString(current_function_name);
@@ -77,6 +82,7 @@ static enum CXChildVisitResult visitor(CXCursor cursor, CXCursor parent, CXClien
 	}
 
 	clang_disposeString(name);
+	clang_disposeString(spelling);
 	return CXChildVisit_Recurse;
 }
 
@@ -89,6 +95,7 @@ int main(int argc, char** argv)
 	const char* compile_commands_path = argv[1];
 
 	hashmap_create(&callmap);
+	hashmap_create(&name2sigmap);
 
 	CXIndex index = clang_createIndex(1, 0);
 	CXCompilationDatabase compilation_db = clang_CompilationDatabase_fromDirectory(compile_commands_path, NULL);
@@ -172,11 +179,15 @@ int main(int argc, char** argv)
 		struct hashmap_entry* entry = callmap.table + i;
 		if (entry->exists) {
 			const struct callmap_caller* caller = entry->value;
-			printf("<li><a id=\"%s\" href=\"#\">%s</a>", entry->key, entry->key);
+			const char* entry_sig = hashmap_get(&name2sigmap, entry->key);
+			assert(entry_sig != NULL);
+			printf("<li><a id=\"%s\" href=\"#\">%s</a>", entry_sig, entry_sig);
 			printf("<ul>");
 			for (int j = 0; j < caller->size; ++j) {
 				const struct callmap_callee* callee = caller->list + j;
-				printf("<li><a href=\"#%s\">%s</a></li>", callee->whom, callee->whom);
+				const char* whom_sig = hashmap_get(&name2sigmap, callee->whom);
+				assert(whom_sig != NULL);
+				printf("<li><a href=\"#%s\">%s</a></li>", whom_sig, whom_sig);
 				free((void*) callee->whom);
 			}
 			printf("</ul>");
@@ -212,6 +223,14 @@ int main(int argc, char** argv)
 "</html>"
 );
 
+	// meeeh ?
+	for (int i = 0; i < name2sigmap.capacity; ++i) {
+		const struct hashmap_entry* entry = name2sigmap.table + i;
+		if (entry->exists)
+			free(entry->value);
+	}
+
+	hashmap_free(&name2sigmap);
 	hashmap_free(&callmap);
 	return 0;
 }
