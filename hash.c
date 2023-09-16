@@ -61,7 +61,7 @@ void hashmap_resize(struct hashmap* self)
 
 void hashmap_insert(struct hashmap* self, const char* key, void* value)
 {
-	if (self->size == self->capacity)
+	if (self->size * 100 / self->capacity * 100 >= 75)
 		hashmap_resize(self);
 
 	int index = djb2(key) % self->capacity;
