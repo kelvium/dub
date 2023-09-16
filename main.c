@@ -105,6 +105,9 @@ int main(int argc, char** argv)
 	for (unsigned int i = 0; i < commands_count; ++i) {
 		CXCompileCommand command = clang_CompileCommands_getCommand(compile_commands, i);
 
+		CXString filename = clang_CompileCommand_getFilename(command);
+		const char* filename_cstr = clang_getCString(filename);
+
 		int args_n = clang_CompileCommand_getNumArgs(command);
 		const char** args = malloc(sizeof(const char*) * args_n);
 		for (int j = 0; j < args_n; ++j) {
@@ -116,16 +119,18 @@ int main(int argc, char** argv)
 		CXTranslationUnit unit;
 		enum CXErrorCode error = clang_parseTranslationUnit2(index, NULL, args, args_n, NULL, 0, CXTranslationUnit_None, &unit);
 		if (error != CXError_Success) {
-			fprintf(stderr, "failed to parse tu: %d\n", error);
+			fprintf(stderr, "failed to parse %s: %d\n", filename_cstr, error);
 			for (int j = 0; j < args_n; ++j)
 				free((void*) args[j]);
 			free(args);
 			continue;
 		}
+		fprintf(stderr, "%s\n", filename_cstr);
 
 		CXCursor cursor = clang_getTranslationUnitCursor(unit);
 		clang_visitChildren(cursor, visitor, NULL);
 
+		clang_disposeString(filename);
 		clang_disposeTranslationUnit(unit);
 
 		for (int j = 0; j < args_n; ++j)
